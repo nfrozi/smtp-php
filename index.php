@@ -22,6 +22,8 @@ $smtpFromName = $_ENV['SMTP_FROM_NAME'] ?? 'SMTP Test';
 $result  = null; // null = no send yet, true = success, false = fail
 $message = '';
 
+print_r($_ENV);
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $toEmail = trim($_POST['to_email'] ?? '');
     $subject = trim($_POST['subject'] ?? 'Test Email from SMTP PHP');
