@@ -12,17 +12,20 @@ if (file_exists(__DIR__ . '/.env')) {
     $dotenv->load();
 }
 
-$smtpHost   = $_ENV['SMTP_HOST']   ?? 'smtp.gmail.com';
-$smtpPort   = $_ENV['SMTP_PORT']   ?? '587';
-$smtpUser   = $_ENV['SMTP_USER']   ?? '';
-$smtpPass   = $_ENV['SMTP_PASS']   ?? '';
-$smtpFrom   = $_ENV['SMTP_FROM']   ?? $smtpUser;
-$smtpFromName = $_ENV['SMTP_FROM_NAME'] ?? 'SMTP Test';
+// getenv() instead of $_ENV — Railway tidak populate $_ENV superglobal
+$env = static fn(string $key) => ($v = getenv($key)) === false ? null : $v;
+
+$smtpHost   = $env('SMTP_HOST')   ?? 'smtp.gmail.com';
+$smtpPort   = $env('SMTP_PORT')   ?? '587';
+$smtpUser   = $env('SMTP_USER')   ?? '';
+$smtpPass   = $env('SMTP_PASS')   ?? '';
+$smtpFrom   = $env('SMTP_FROM')   ?? $smtpUser;
+$smtpFromName = $env('SMTP_FROM_NAME') ?? 'SMTP Test';
 
 $result  = null; // null = no send yet, true = success, false = fail
 $message = '';
 
-print_r($_ENV);
+print_r(getenv());
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $toEmail = trim($_POST['to_email'] ?? '');
