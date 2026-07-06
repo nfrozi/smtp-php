@@ -1,28 +1,19 @@
 <?php
 require __DIR__ . '/vendor/autoload.php';
 
-use Dotenv\Dotenv;
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\SMTP;
-use PHPMailer\PHPMailer\Exception;
-
-// Load .env if exists (optional — env vars also work standalone)
 if (file_exists(__DIR__ . '/.env')) {
-    $dotenv = Dotenv::createImmutable(__DIR__);
+    $dotenv = Dotenv\Dotenv::createImmutable(__DIR__);
     $dotenv->load();
 }
 
-// getenv() instead of $_ENV — Railway tidak populate $_ENV superglobal
 $env = static fn(string $key) => ($v = getenv($key)) === false ? null : $v;
 
-$smtpHost   = $env('SMTP_HOST')   ?? 'smtp.gmail.com';
-$smtpPort   = $env('SMTP_PORT')   ?? '587';
-$smtpUser   = $env('SMTP_USER')   ?? '';
-$smtpPass   = $env('SMTP_PASS')   ?? '';
-$smtpFrom   = $env('SMTP_FROM')   ?? $smtpUser;
-$smtpFromName = $env('SMTP_FROM_NAME') ?? 'SMTP Test';
+$mjPublicKey  = $env('MJ_APIKEY_PUBLIC')  ?? '';
+$mjPrivateKey = $env('MJ_APIKEY_PRIVATE') ?? '';
+$mjFrom       = $env('MJ_FROM_EMAIL')     ?? '';
+$mjFromName   = $env('MJ_FROM_NAME')     ?? 'SMTP Test';
 
-$result  = null; // null = no send yet, true = success, false = fail
+$result  = null;
 $message = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -33,31 +24,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($toEmail === '') {
         $result  = false;
         $message = 'Recipient email is required.';
-    } elseif ($smtpUser === '' || $smtpPass === '') {
+    } elseif ($mjPublicKey === '' || $mjPrivateKey === '' || $mjFrom === '') {
         $result  = false;
-        $message = 'SMTP_USER / SMTP_PASS not set. Check .env or environment variables.';
+        $message = 'MJ_APIKEY_PUBLIC / MJ_APIKEY_PRIVATE / MJ_FROM_EMAIL not set. Check .env or environment variables.';
     } else {
-        $mail = new PHPMailer(true);
         try {
-            $mail->isSMTP();
-            $mail->Host       = $smtpHost;
-            $mail->SMTPAuth   = true;
-            $mail->Username   = $smtpUser;
-            $mail->Password   = $smtpPass;
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port       = (int) $smtpPort;
+            // Mailjet Send API v3.1
+            $mj = new \Mailjet\Client($mjPublicKey, $mjPrivateKey, true, ['version' => 'v3.1']);
+            $payload = [
+                'Messages' => [
+                    [
+                        'From'      => ['Email' => $mjFrom, 'Name' => $mjFromName],
+                        'To'        => [['Email' => $toEmail]],
+                        'Subject'   => $subject,
+                        'TextPart'  => $body,
+                        'HTMLPart'  => nl2br(htmlspecialchars($body)),
+                    ],
+                ],
+            ];
+            $response = $mj->post(\Mailjet\Resources::$Email, ['body' => $payload]);
 
-            $mail->setFrom($smtpFrom, $smtpFromName);
-            $mail->addAddress($toEmail);
-            $mail->Subject = $subject;
-            $mail->Body    = $body;
-
-            $mail->send();
-            $result  = true;
-            $message = "Email sent successfully to <strong>" . htmlspecialchars($toEmail) . "</strong>.";
-        } catch (Exception $e) {
+            if ($response->success()) {
+                $data       = $response->getData();
+                $msgStatus  = $data[0]['Status'] ?? 'Sent';
+                $msgId      = $data[0]['To'][0]['MessageID'] ?? null;
+                $result     = true;
+                $message    = "Email sent to <strong>" . htmlspecialchars($toEmail) . "</strong>";
+                if ($msgId) {
+                    $message .= " (MessageID: " . htmlspecialchars((string) $msgId) . ", Status: " . htmlspecialchars($msgStatus) . ")";
+                }
+            } else {
+                $result  = false;
+                $reasons = $response->getReasonPhrase();
+                $details = '';
+                $bodyData = $response->getData();
+                if (!empty($bodyData['Messages'][0]['Errors'])) {
+                    $errs = array_map(
+                        static fn($e) => ($e['ErrorMessage'] ?? $e['ErrorCode'] ?? json_encode($e)),
+                        $bodyData['Messages'][0]['Errors']
+                    );
+                    $details = ' — ' . implode('; ', $errs);
+                }
+                $message = "Send failed: " . $reasons . $details;
+            }
+        } catch (\Throwable $e) {
             $result  = false;
-            $message = "Send failed: " . $mail->ErrorInfo;
+            $message = "Send failed: " . $e->getMessage();
         }
     }
 }
@@ -67,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SMTP Test</title>
+    <title>Mailjet Send Test</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -110,8 +122,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
     <div class="card">
-        <h1>📧 SMTP Send Test</h1>
-        <p class="sub">Send email via Gmail SMTP using environment credentials.</p>
+        <h1>📧 Mailjet Send Test</h1>
+        <p class="sub">Send email via Mailjet Transactional API using environment credentials.</p>
 
         <?php if ($result === true): ?>
             <div class="alert success"><?= $message ?></div>
@@ -137,9 +149,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         <div class="env-note">
             <strong>⚙️ Credentials</strong> are read from environment variables:
-            <code>SMTP_USER</code>, <code>SMTP_PASS</code> (or <code>.env</code> file).
-            <?php if ($smtpUser): ?>
-                <br><br>📧 Using: <strong><?= htmlspecialchars($smtpUser) ?></strong>
+            <code>MJ_APIKEY_PUBLIC</code>, <code>MJ_APIKEY_PRIVATE</code>, <code>MJ_FROM_EMAIL</code> (or <code>.env</code> file).
+            <?php if ($mjFrom): ?>
+                <br><br>📧 Using: <strong><?= htmlspecialchars($mjFrom) ?></strong>
             <?php else: ?>
                 <br><br>⚠️ Not configured yet.
             <?php endif; ?>
